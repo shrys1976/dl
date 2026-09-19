@@ -11,9 +11,15 @@ dependencies = [
     "notebook>=7.6.2",
     "numpy>=2.5.3",
     "pandas>=3.0.5",
+    "scipy>=1.18.1",
 ]
 
 [dependency-groups]
 dev = [
     "jupyterlab>=4.6.3",
+]
+
+[tool.uv.workspace]
+members = [
+    "d2l-cpu-project",
 ]
