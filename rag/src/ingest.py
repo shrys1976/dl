@@ -1,10 +1,9 @@
 from pathlib import Path
+
 import pymupdf
 
-# each page is stripped of its text and stored with
-# additional data such as source, page, the actual text
-# each page is stored as a seperate dict in the list
-def extract_pdf(path: str) -> list[dict]:
+
+def extract_pdf(path: str | Path) -> list[dict]:
     pdf_path = Path(path)
 
     if not pdf_path.exists():
@@ -17,44 +16,39 @@ def extract_pdf(path: str) -> list[dict]:
             text = page.get_text("text").strip()
 
             pages.append({
+                "source": pdf_path.name,
+                "page": page_number + 1,
+                "text": text,
+            })
 
-                "source":pdf_path.name,
-                "page":page_number+1,
-                "text":text,
-            })   
-
-    return pages        
-
+    return pages
 
 
 def chunk_text(
-    text:str,
-    chunk_size:int =1000,
-    overlap:int =150
-    ) -> list[str]:
-
-    if overlap>=chunk_size:
+    text: str,
+    chunk_size: int = 1000,
+    overlap: int = 150,
+) -> list[str]:
+    if overlap >= chunk_size:
         raise ValueError("Overlap must be less than chunk size")
 
-    words = text.split() # splits words by spaces
+    words = text.split()
     chunks = []
     start = 0
 
-    while start<len(words):
-        end = start+chunk_size
-
+    while start < len(words):
+        end = start + chunk_size
         chunk = " ".join(words[start:end]).strip()
 
         if chunk:
             chunks.append(chunk)
 
-        start = end-overlap
+        start = end - overlap
 
     return chunks
 
 
-
-def build_chunks(pages:list[dict])->list[dict]:
+def build_chunks(pages: list[dict]) -> list[dict]:
     chunks = []
 
     for page in pages:
@@ -62,12 +56,12 @@ def build_chunks(pages:list[dict])->list[dict]:
 
         for chunk_id, chunk in enumerate(page_chunks):
             chunks.append({
-                "source":page["source"],
-                "page":page["page"],
+                "source": page["source"],
+                "page": page["page"],
                 "chunk_id": chunk_id,
                 "text": chunk,
-            })                    
-   
+            })
+
     return chunks
 
 

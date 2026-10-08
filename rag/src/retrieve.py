@@ -1,6 +1,7 @@
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
+
 def retrieve(
     query: str,
     model: SentenceTransformer,
@@ -8,7 +9,6 @@ def retrieve(
     chunks: list[dict],
     k: int = 5,
 ) -> list[dict]:
-
     query_embedding = model.encode(
         [query],
         normalize_embeddings=True,
@@ -20,13 +20,12 @@ def retrieve(
     )
 
     scores = (query_embedding @ embeddings.T)[0]
-
     top_indices = np.argsort(-scores)[:k]
 
     results = []
-
     for idx in top_indices:
         results.append({
+            "index": int(idx),
             "score": float(scores[idx]),
             **chunks[idx],
         })
