@@ -1,5 +1,9 @@
-from sentence_transformers import SentenceTransformer
+from typing import Literal
+
 import numpy as np
+from sentence_transformers import SentenceTransformer
+
+RetrievalMode = Literal["baseline", "hyde"]
 
 
 def retrieve(
@@ -31,6 +35,33 @@ def retrieve(
         })
 
     return results
+
+
+def retrieve_with_mode(
+    query: str,
+    model: SentenceTransformer,
+    embeddings: np.ndarray,
+    chunks: list[dict],
+    *,
+    mode: RetrievalMode = "baseline",
+    k: int = 5,
+    llm=None,
+) -> list[dict]:
+    if mode == "baseline":
+        return retrieve(query, model, embeddings, chunks, k=k)
+
+    if mode == "hyde":
+        if llm is None:
+            from hyde import create_hyde_llm
+
+            llm = create_hyde_llm()
+
+        from hyde import retrieve_hyde
+
+        results, _ = retrieve_hyde(query, model, embeddings, chunks, llm, k=k)
+        return results
+
+    raise ValueError(f"Unknown retrieval mode: {mode}")
 
 
 if __name__ == "__main__":

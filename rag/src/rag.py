@@ -23,7 +23,7 @@ Answer:
 """
 
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 

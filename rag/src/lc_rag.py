@@ -80,7 +80,7 @@ Answer:
 
 if __name__ == "__main__":
     llm = ChatGroq(
-        model=os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b"),
         temperature=0.2,
     )
 
