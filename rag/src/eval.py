@@ -1,12 +1,16 @@
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from ingest import load_all_chunks
+from ingest import ChunkingStrategy, load_all_chunks
 from retrieve import retrieve
+
+GroundTruthMethod = Literal["keyword", "semantic"]
+RECALL_KS = (1, 5, 10)
 
 EVAL_QUERIES = [
     {
@@ -48,7 +52,7 @@ def recall_at_k(
     return len(set(retrieved[:k]) & relevant) / len(relevant)
 
 
-def find_relevant_indices(
+def find_relevant_indices_keyword(
     chunks: list[dict],
     keywords: list[str],
     *,
@@ -73,28 +77,139 @@ def find_relevant_indices(
     return relevant
 
 
+def find_relevant_indices_semantic(
+    query: str,
+    chunks: list[dict],
+    embed_model: SentenceTransformer,
+    *,
+    source: str | None = None,
+    similarity_threshold: float = 0.45,
+    max_relevant: int = 5,
+) -> set[int]:
+    candidate_indices = [
+        index
+        for index, chunk in enumerate(chunks)
+        if source is None or chunk["source"] == source
+    ]
+
+    if not candidate_indices:
+        return set()
+
+    candidate_texts = [chunks[index]["text"] for index in candidate_indices]
+    query_embedding = embed_model.encode(
+        [query],
+        normalize_embeddings=True,
+    )
+    chunk_embeddings = embed_model.encode(
+        candidate_texts,
+        normalize_embeddings=True,
+    )
+
+    query_embedding = np.asarray(query_embedding, dtype=np.float32)[0]
+    chunk_embeddings = np.asarray(chunk_embeddings, dtype=np.float32)
+
+    scores = chunk_embeddings @ query_embedding
+    ranked = sorted(
+        zip(candidate_indices, scores, strict=True),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    relevant = {
+        index
+        for index, score in ranked[:max_relevant]
+        if score >= similarity_threshold
+    }
+
+    if not relevant and ranked:
+        relevant = {ranked[0][0]}
+
+    return relevant
+
+
+def resolve_relevant_indices(
+    item: dict,
+    chunks: list[dict],
+    *,
+    ground_truth: GroundTruthMethod,
+    embed_model: SentenceTransformer | None = None,
+) -> set[int]:
+    explicit = item.get("relevant_chunks")
+    if explicit is not None:
+        return set(explicit)
+
+    if ground_truth == "keyword":
+        return find_relevant_indices_keyword(
+            chunks,
+            item["keywords"],
+            source=item.get("source"),
+        )
+
+    if embed_model is None:
+        raise ValueError("Semantic ground truth requires an embedding model.")
+
+    return find_relevant_indices_semantic(
+        item["query"],
+        chunks,
+        embed_model,
+        source=item.get("source"),
+    )
+
+
 def evaluate_retriever(
     eval_queries: list[dict],
     retrieve_fn: Callable[[str, int], list[dict]],
     chunks: list[dict],
     k: int = 5,
+    *,
+    ground_truth: GroundTruthMethod = "keyword",
+    embed_model: SentenceTransformer | None = None,
 ) -> float:
     recalls = []
 
     for item in eval_queries:
-        relevant = item.get("relevant_chunks")
-        if relevant is None:
-            relevant = find_relevant_indices(
-                chunks,
-                item["keywords"],
-                source=item.get("source"),
-            )
-
+        relevant = resolve_relevant_indices(
+            item,
+            chunks,
+            ground_truth=ground_truth,
+            embed_model=embed_model,
+        )
         results = retrieve_fn(item["query"], k)
         retrieved = [result["index"] for result in results]
-        recalls.append(recall_at_k(retrieved, set(relevant), k))
+        recalls.append(recall_at_k(retrieved, relevant, k))
 
     return sum(recalls) / len(recalls)
+
+
+def evaluate_retriever_at_ks(
+    eval_queries: list[dict],
+    retrieve_fn: Callable[[str, int], list[dict]],
+    chunks: list[dict],
+    ks: tuple[int, ...] = RECALL_KS,
+    *,
+    ground_truth: GroundTruthMethod = "keyword",
+    embed_model: SentenceTransformer | None = None,
+) -> dict[int, float]:
+    max_k = max(ks)
+    per_k_recalls = {k: [] for k in ks}
+
+    for item in eval_queries:
+        relevant = resolve_relevant_indices(
+            item,
+            chunks,
+            ground_truth=ground_truth,
+            embed_model=embed_model,
+        )
+        results = retrieve_fn(item["query"], max_k)
+        retrieved = [result["index"] for result in results]
+
+        for k in ks:
+            per_k_recalls[k].append(recall_at_k(retrieved, relevant, k))
+
+    return {
+        k: sum(values) / len(values)
+        for k, values in per_k_recalls.items()
+    }
 
 
 def measure_query_latency(
@@ -125,6 +240,19 @@ def build_retrieve_fn(
     return retrieve_fn
 
 
+def build_embeddings(
+    model: SentenceTransformer,
+    chunks: list[dict],
+) -> np.ndarray:
+    texts = [chunk["text"] for chunk in chunks]
+    embeddings = model.encode(
+        texts,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+    )
+    return np.asarray(embeddings, dtype=np.float32)
+
+
 if __name__ == "__main__":
     DATA_DIR = Path(__file__).resolve().parents[1] / "data"
     MODEL_NAME = "all-MiniLM-L6-v2"
@@ -136,16 +264,7 @@ if __name__ == "__main__":
 
     print("Loading model...")
     model = SentenceTransformer(MODEL_NAME)
-
-    print("Building embeddings...")
-    texts = [chunk["text"] for chunk in all_chunks]
-    embeddings = model.encode(
-        texts,
-        normalize_embeddings=True,
-        show_progress_bar=True,
-    )
-    embeddings = np.asarray(embeddings, dtype=np.float32)
-
+    embeddings = build_embeddings(model, all_chunks)
     retrieve_fn = build_retrieve_fn(model, embeddings, all_chunks)
 
     print(f"\nEvaluating retriever (Recall@{TOP_K})...")
@@ -164,19 +283,3 @@ if __name__ == "__main__":
         k=TOP_K,
     )
     print(f"Query latency: {latency_ms:.2f} ms")
-
-    print("\nPer-query breakdown:")
-    for item in EVAL_QUERIES:
-        relevant = find_relevant_indices(
-            all_chunks,
-            item["keywords"],
-            source=item.get("source"),
-        )
-        results = retrieve_fn(item["query"], TOP_K)
-        retrieved = [result["index"] for result in results]
-        query_recall = recall_at_k(retrieved, relevant, TOP_K)
-
-        print(f"\nQuery: {item['query']}")
-        print(f"  Relevant chunks: {sorted(relevant)}")
-        print(f"  Retrieved chunks: {retrieved}")
-        print(f"  Recall@{TOP_K}: {query_recall:.2%}")

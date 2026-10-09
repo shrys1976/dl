@@ -1,6 +1,12 @@
 from pathlib import Path
+from typing import Literal
 
 import pymupdf
+from sentence_transformers import SentenceTransformer
+
+from chunking import fixed_split, recursive_split, semantic_split
+
+ChunkingStrategy = Literal["fixed", "recursive", "semantic"]
 
 
 def extract_pdf(path: str | Path) -> list[dict]:
@@ -24,63 +30,77 @@ def extract_pdf(path: str | Path) -> list[dict]:
     return pages
 
 
-def chunk_text(
+def split_page_text(
     text: str,
-    chunk_size: int = 1000,
-    overlap: int = 150,
+    strategy: ChunkingStrategy,
+    embed_model: SentenceTransformer | None = None,
 ) -> list[str]:
-    if overlap >= chunk_size:
-        raise ValueError("Overlap must be less than chunk size")
+    if strategy == "fixed":
+        return fixed_split(text)
 
-    words = text.split()
-    chunks = []
-    start = 0
+    if strategy == "recursive":
+        return recursive_split(text)
 
-    while start < len(words):
-        end = start + chunk_size
-        chunk = " ".join(words[start:end]).strip()
+    if strategy == "semantic":
+        if embed_model is None:
+            raise ValueError("Semantic chunking requires an embedding model.")
+        return semantic_split(text, embed_model)
 
-        if chunk:
-            chunks.append(chunk)
-
-        start = end - overlap
-
-    return chunks
+    raise ValueError(f"Unknown chunking strategy: {strategy}")
 
 
-def build_chunks(pages: list[dict]) -> list[dict]:
+def build_chunks(
+    pages: list[dict],
+    strategy: ChunkingStrategy = "fixed",
+    embed_model: SentenceTransformer | None = None,
+) -> list[dict]:
     chunks = []
 
     for page in pages:
-        page_chunks = chunk_text(page["text"])
+        page_chunks = split_page_text(
+            page["text"],
+            strategy=strategy,
+            embed_model=embed_model,
+        )
 
         for chunk_id, chunk in enumerate(page_chunks):
             chunks.append({
                 "source": page["source"],
                 "page": page["page"],
                 "chunk_id": chunk_id,
+                "chunk_strategy": strategy,
                 "text": chunk,
             })
 
     return chunks
 
 
-def load_all_chunks(data_dir: Path | str | None = None) -> list[dict]:
+def load_all_chunks(
+    data_dir: Path | str | None = None,
+    *,
+    strategy: ChunkingStrategy = "fixed",
+    embed_model: SentenceTransformer | None = None,
+) -> list[dict]:
     if data_dir is None:
         data_dir = Path(__file__).resolve().parents[1] / "data"
     else:
         data_dir = Path(data_dir)
 
+    if strategy == "semantic" and embed_model is None:
+        embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+
     all_chunks = []
     for pdf_path in sorted(data_dir.glob("*.pdf")):
         pages = extract_pdf(pdf_path)
-        all_chunks.extend(build_chunks(pages))
+        all_chunks.extend(
+            build_chunks(pages, strategy=strategy, embed_model=embed_model)
+        )
 
     return all_chunks
 
 
 if __name__ == "__main__":
-    chunks = load_all_chunks()
+    chunks = load_all_chunks(strategy="fixed")
     print(len(chunks))
     print(chunks[0])
 
