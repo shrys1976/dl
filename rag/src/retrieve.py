@@ -1,9 +1,10 @@
 from typing import Literal
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import CrossEncoder, SentenceTransformer
 
 RetrievalMode = Literal["baseline", "hyde"]
+RerankerType = Literal["cross_encoder", "bi_encoder"]
 
 
 def retrieve(
@@ -62,6 +63,33 @@ def retrieve_with_mode(
         return results
 
     raise ValueError(f"Unknown retrieval mode: {mode}")
+
+
+def retrieve_with_rerank(
+    query: str,
+    model: SentenceTransformer,
+    embeddings: np.ndarray,
+    chunks: list[dict],
+    *,
+    reranker_type: RerankerType = "cross_encoder",
+    k: int = 5,
+    candidate_k: int = 20,
+    cross_encoder: CrossEncoder | None = None,
+    rerank_bi_encoder_model: SentenceTransformer | None = None,
+) -> list[dict]:
+    from rerank import retrieve_rerank
+
+    return retrieve_rerank(
+        query,
+        model,
+        embeddings,
+        chunks,
+        reranker_type=reranker_type,
+        k=k,
+        candidate_k=candidate_k,
+        cross_encoder=cross_encoder,
+        rerank_bi_encoder_model=rerank_bi_encoder_model,
+    )
 
 
 if __name__ == "__main__":

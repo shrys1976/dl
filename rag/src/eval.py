@@ -233,9 +233,25 @@ def build_retrieve_fn(
     model: SentenceTransformer,
     embeddings: np.ndarray,
     chunks: list[dict],
+    *,
+    reranker_type: str | None = None,
+    candidate_k: int = 20,
 ) -> Callable[[str, int], list[dict]]:
     def retrieve_fn(query: str, k: int = 5) -> list[dict]:
-        return retrieve(query, model, embeddings, chunks, k=k)
+        if reranker_type is None:
+            return retrieve(query, model, embeddings, chunks, k=k)
+
+        from retrieve import retrieve_with_rerank
+
+        return retrieve_with_rerank(
+            query,
+            model,
+            embeddings,
+            chunks,
+            reranker_type=reranker_type,  # type: ignore[arg-type]
+            k=k,
+            candidate_k=max(candidate_k, k),
+        )
 
     return retrieve_fn
 

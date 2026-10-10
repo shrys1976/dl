@@ -8,7 +8,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from ingest import ChunkingStrategy, load_all_chunks
-from retrieve import retrieve
+from retrieve import retrieve, retrieve_with_rerank
 
 RAG_PROMPT = """You are a helpful assistant. Answer the question using only the context below.
 If the answer is not in the context, say "I don't know based on the provided documents."
@@ -110,8 +110,22 @@ def rag_answer(
     k: int = 5,
     llm_model: str | None = None,
     api_key: str | None = None,
+    reranker_type: str | None = None,
+    candidate_k: int = 20,
 ) -> dict:
-    results = retrieve(query, embed_model, embeddings, chunks, k=k)
+    reranker_type = reranker_type or os.environ.get("RERANKER_TYPE")
+    if reranker_type in {"cross_encoder", "bi_encoder"}:
+        results = retrieve_with_rerank(
+            query,
+            embed_model,
+            embeddings,
+            chunks,
+            reranker_type=reranker_type,  # type: ignore[arg-type]
+            k=k,
+            candidate_k=candidate_k,
+        )
+    else:
+        results = retrieve(query, embed_model, embeddings, chunks, k=k)
     prompt = build_prompt(query, results)
     answer = generate_answer(
         prompt,
